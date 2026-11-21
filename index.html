@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10141c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>步步为营 · Quoridor 墙棋</title>
+<meta name="description" content="9×9 双人墙棋：移动棋子或放置挡板，先抵达对岸者胜。支持双人对战与三档人机对战。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2310141c'/%3E%3Crect x='9' y='9' width='46' height='46' rx='4' fill='%23efe3c8'/%3E%3Crect x='9' y='9' width='46' height='4' fill='%23e9b44c'/%3E%3Crect x='9' y='51' width='46' height='4' fill='%23e9b44c'/%3E%3Ccircle cx='24' cy='32' r='7' fill='%23ef7d3f'/%3E%3Ccircle cx='41' cy='32' r='7' fill='%234d9fe6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css?v=20261121">
+</head>
+<body>
+<div id="boot-error" class="hidden"></div>
+<noscript>
+  <div class="boot-error">这个游戏需要启用 JavaScript 才能运行，请在浏览器设置中允许 JavaScript。</div>
+</noscript>
+<div class="app">
+  <main class="layout">
+    <section class="board-wrap" id="board-wrap">
+      <canvas id="board" aria-label="步步为营棋盘"></canvas>
+
+      <div class="overlay hidden" id="overlay">
+        <div class="overlay-card">
+          <div class="overlay-badge" id="overlay-badge">1</div>
+          <h2 id="overlay-title">玩家一 获胜！</h2>
+          <p class="overlay-sub">率先抵达对岸底线</p>
+          <button class="overlay-btn" id="overlay-restart">再来一局 <kbd>R</kbd></button>
+        </div>
+      </div>
+
+      <div class="toast hidden" id="toast"></div>
+    </section>
+
+    <section class="mobile-info" id="mobile-info">
+      <div class="mi-players">
+        <div class="mi-player active" id="mi-p0">
+          <span class="mi-dot">1</span>
+          <span class="mi-name" id="mi-name-0">玩家一</span>
+          <span class="mi-walls" id="mi-w0">挡板 10</span>
+        </div>
+        <div class="mi-player" id="mi-p1">
+          <span class="mi-dot">2</span>
+          <span class="mi-name" id="mi-name-1">玩家二</span>
+          <span class="mi-walls" id="mi-w1">挡板 10</span>
+        </div>
+      </div>
+      <p class="mi-message" id="mi-message">点击圆点移动棋子</p>
+    </section>
+
+    <aside class="panel" id="panel">
+      <div class="sheet-grip">
+        <span></span>
+        <button type="button" id="sheet-close">完成</button>
+      </div>
+      <header class="panel-head">
+        <h1>步步为营</h1>
+        <span class="brand-en">QUORIDOR</span>
+        <p class="subtitle">9×9 墙棋 · 先抵达对岸者胜</p>
+      </header>
+
+      <section class="section">
+        <div class="section-label">对战模式</div>
+        <div class="seg" id="game-mode">
+          <button type="button" data-mode="pvp" class="active">双人对战</button>
+          <button type="button" data-mode="pve">人机对战</button>
+        </div>
+      </section>
+
+      <section class="section hidden" id="difficulty-section">
+        <div class="section-label">电脑难度</div>
+        <div class="seg seg-3" id="difficulty">
+          <button type="button" data-level="简单">简单</button>
+          <button type="button" data-level="普通" class="active">普通</button>
+          <button type="button" data-level="困难">困难</button>
+        </div>
+      </section>
+
+      <div class="players">
+        <article class="player-card active" id="card-0">
+          <div class="player-dot">1</div>
+          <div class="player-main">
+            <div class="player-name" id="name-0">玩家一</div>
+            <div class="player-count" id="count-0">挡板 10 / 10</div>
+          </div>
+          <span class="player-active">行动中</span>
+          <div class="player-bar"><i id="bar-0"></i></div>
+        </article>
+        <article class="player-card" id="card-1">
+          <div class="player-dot">2</div>
+          <div class="player-main">
+            <div class="player-name" id="name-1">玩家二</div>
+            <div class="player-count" id="count-1">挡板 10 / 10</div>
+          </div>
+          <span class="player-active">行动中</span>
+          <div class="player-bar"><i id="bar-1"></i></div>
+        </article>
+      </div>
+
+      <div class="turn-row">
+        <span class="turn" id="turn-text">轮到 玩家一</span>
+        <span class="turn-side" id="turn-side">移动模式</span>
+      </div>
+
+      <div class="seg" id="mode-switch">
+        <button type="button" data-mode="move" class="active">移动棋子</button>
+        <button type="button" data-mode="wall">放置挡板</button>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="undo" class="ghost">撤销 <kbd>Z</kbd></button>
+        <button type="button" id="restart" class="ghost">重开 <kbd>R</kbd></button>
+        <button type="button" id="sound" class="ghost">音效 开</button>
+      </div>
+
+      <div class="message" id="message" role="status" aria-live="polite">点击圆点移动棋子，空格键切换放墙模式</div>
+
+      <section class="rules">
+        <div class="section-label">规则速览</div>
+        <ul>
+          <li>每人 10 块挡板，放下后不可移动</li>
+          <li>挡板不可封死任意一方的通路</li>
+          <li>先抵达对岸底线任意一格即获胜</li>
+        </ul>
+      </section>
+
+      <footer class="shortcuts">
+        空格 切换模式 · R 重开 · Z 撤销<br>
+        ESC 取消 / 退出 · 右键 退出放墙
+      </footer>
+    </aside>
+  </main>
+</div>
+
+<header class="mobile-top">
+  <div class="mt-brand">步步为营</div>
+  <div class="mt-status">
+    <span class="mt-turn" id="mt-turn">轮到 玩家一</span>
+    <span class="mt-counts" id="mt-counts">挡板 10 · 10</span>
+  </div>
+  <button type="button" class="mt-menu" id="mt-menu" aria-label="打开菜单">☰</button>
+</header>
+
+<div class="sheet-backdrop hidden" id="sheet-backdrop"></div>
+
+<nav class="mobile-dock">
+  <div class="dock-modes">
+    <button type="button" class="dock-btn active" id="dock-move">移动</button>
+    <button type="button" class="dock-btn" id="dock-wall">放墙</button>
+  </div>
+  <button type="button" class="dock-btn" id="dock-undo">悔棋</button>
+  <button type="button" class="dock-btn" id="dock-menu">菜单</button>
+</nav>
+
+<script>
+  window.addEventListener("error", function (event) {
+    var box = document.getElementById("boot-error");
+    if (!box) return;
+    var target = event.target;
+    var detail = target && target.src ? "资源加载失败：" + target.src : event.message || "未知脚本错误";
+    box.textContent = "页面启动失败 — " + detail;
+    box.classList.remove("hidden");
+  }, true);
+</script>
+<script src="js/engine.js?v=20261121"></script>
+<script src="js/ui.js?v=20261121"></script>
+</body>
+</html>
