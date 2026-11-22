@@ -30,7 +30,7 @@
         </div>
       </div>
 
-      <div class="toast hidden" id="toast"></div>
+      <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
     </section>
 
     <section class="mobile-info" id="mobile-info">
@@ -84,6 +84,10 @@
 
         <div id="online-setup">
           <p class="online-hint">创建邀请码发给好友；或输入好友的邀请码加入。</p>
+          <div class="online-name">
+            <label for="online-name">你的昵称</label>
+            <input id="online-name" maxlength="8" autocomplete="nickname" placeholder="例如：小明">
+          </div>
           <div class="online-actions">
             <button type="button" class="online-btn primary" id="online-host">创建邀请码</button>
             <button type="button" class="online-btn" id="online-join-toggle">输入邀请码</button>
@@ -103,11 +107,12 @@
             <button type="button" data-target="3" class="active">3</button>
             <button type="button" data-target="5">5</button>
           </div>
-          <p class="online-status" id="online-status">未连接</p>
+          <p class="online-status" id="online-status" aria-live="polite">未连接</p>
         </div>
 
         <div id="online-room" class="hidden">
           <div class="online-room-row">
+            <span class="online-dot"></span>
             <span>对手</span><b id="online-opponent">等待加入</b>
           </div>
           <button type="button" class="online-btn danger" id="online-leave">断开联机</button>
@@ -209,7 +214,10 @@
     </label>
     <label class="setting-row">
       <span>音乐音量</span>
-      <input type="range" id="music-volume" min="0" max="100" step="1">
+      <span class="volume-wrap">
+        <input type="range" id="music-volume" min="0" max="100" step="1">
+        <output id="music-volume-label">30%</output>
+      </span>
     </label>
     <label class="setting-row">
       <span>游戏音效</span>
@@ -217,9 +225,13 @@
     </label>
     <label class="setting-row">
       <span>音效音量</span>
-      <input type="range" id="sfx-volume" min="0" max="100" step="1">
+      <span class="volume-wrap">
+        <input type="range" id="sfx-volume" min="0" max="100" step="1">
+        <output id="sfx-volume-label">70%</output>
+      </span>
     </label>
     <p class="setting-note">设置会自动保存在本机浏览器。</p>
+    <button type="button" class="settings-reset" id="settings-reset">恢复默认设置</button>
   </div>
 </div>
 
@@ -240,6 +252,17 @@
     <p id="online-modal-text"></p>
     <div class="modal-actions">
       <button type="button" class="primary" id="online-modal-close">知道了</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="leave-modal">
+  <div class="modal-card small">
+    <h3>断开联机？</h3>
+    <p id="leave-text">离开后当前比分和棋局不会保留，需要重新创建邀请码。</p>
+    <div class="modal-actions">
+      <button type="button" id="leave-cancel">继续对局</button>
+      <button type="button" class="primary" id="leave-confirm">断开</button>
     </div>
   </div>
 </div>

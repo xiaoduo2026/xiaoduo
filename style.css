@@ -412,6 +412,32 @@ kbd {
   line-height: 1.5;
 }
 
+.online-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.online-name input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-edge);
+  background: #151c29;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.online-name input:focus {
+  border-color: var(--accent);
+}
+
 .online-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -566,6 +592,19 @@ kbd {
   color: var(--muted);
 }
 
+.online-room-row .online-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.14);
+}
+
+.online-room-row .online-dot + span {
+  color: var(--muted);
+}
+
 .online-room-row b {
   color: var(--text);
 }
@@ -684,8 +723,37 @@ kbd {
 }
 
 .setting-row input[type="range"] {
-  width: 140px;
+  width: 120px;
   accent-color: var(--accent);
+}
+
+.volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.volume-wrap output {
+  width: 34px;
+  color: var(--faint);
+  font: 11px/1 "Consolas", "Courier New", monospace;
+  text-align: right;
+}
+
+.settings-reset {
+  width: 100%;
+  height: 32px;
+  margin-top: 12px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-edge);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.settings-reset:hover {
+  background: var(--card);
+  color: var(--text);
 }
 
 .setting-row input[type="checkbox"] {
@@ -881,6 +949,11 @@ kbd {
   animation: fade-in 0.18s ease both;
 }
 
+.toast.ok {
+  color: var(--ok);
+  border-color: rgba(62, 207, 142, 0.45);
+}
+
 /* --------------------------------------------------------------- 响应式 */
 .mobile-top,
 .mobile-dock,
@@ -950,7 +1023,7 @@ kbd {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 1;
+    flex: 0 0 auto;
     min-height: 0;
     margin-top: 10px;
     padding: 0 2px;
@@ -1346,6 +1419,10 @@ kbd {
     height: 34px;
     flex: 0 0 34px;
     font-size: 16px;
+  }
+
+  .layout {
+    justify-content: center;
   }
 
   .mobile-dock {

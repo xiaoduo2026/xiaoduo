@@ -202,6 +202,7 @@
       this.ctx2d = this.canvas.getContext("2d");
       this.settings = this.loadSettings();
       this.sound = new Sound(this.settings);
+      this.playerName = this.loadPlayerName();
 
       this.state = new GameState();
       this.gameMode = "pvp";
@@ -234,6 +235,7 @@
       this.targetScore = 3;
       this.matchOver = false;
       this.rematch = { pending: false, requestSent: false };
+      this.pendingMode = null;
 
       this.el = {
         overlay: document.getElementById("overlay"),
@@ -251,8 +253,15 @@
         settingsClose: document.getElementById("settings-close"),
         settingMusic: document.getElementById("setting-music"),
         musicVolume: document.getElementById("music-volume"),
+        musicVolumeLabel: document.getElementById("music-volume-label"),
         settingSfx: document.getElementById("setting-sfx"),
         sfxVolume: document.getElementById("sfx-volume"),
+        sfxVolumeLabel: document.getElementById("sfx-volume-label"),
+        settingsReset: document.getElementById("settings-reset"),
+        leaveModal: document.getElementById("leave-modal"),
+        leaveText: document.getElementById("leave-text"),
+        leaveCancel: document.getElementById("leave-cancel"),
+        leaveConfirm: document.getElementById("leave-confirm"),
         rematchModal: document.getElementById("rematch-modal"),
         rematchText: document.getElementById("rematch-text"),
         rematchAccept: document.getElementById("rematch-accept"),
@@ -264,6 +273,7 @@
         onlineSection: document.getElementById("online-section"),
         onlineSetup: document.getElementById("online-setup"),
         onlineRoom: document.getElementById("online-room"),
+        onlineName: document.getElementById("online-name"),
         onlineHost: document.getElementById("online-host"),
         onlineJoinToggle: document.getElementById("online-join-toggle"),
         onlineJoinBox: document.getElementById("online-join-box"),
@@ -307,6 +317,7 @@
         bars: [document.getElementById("bar-0"), document.getElementById("bar-1")],
       };
 
+      this.el.onlineName.value = this.playerName;
       this._bindUI();
       this._bindInput();
 
@@ -342,6 +353,22 @@
     saveSettings() {
       try {
         localStorage.setItem("quoridor.settings", JSON.stringify(this.settings));
+      } catch (error) {
+        // 忽略本地存储异常
+      }
+    }
+
+    loadPlayerName() {
+      try {
+        return (localStorage.getItem("quoridor.name") || "我").slice(0, 8);
+      } catch (error) {
+        return "我";
+      }
+    }
+
+    savePlayerName() {
+      try {
+        localStorage.setItem("quoridor.name", this.playerName);
       } catch (error) {
         // 忽略本地存储异常
       }
@@ -782,6 +809,16 @@
     onKeyDown(event) {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       this.sound.unlock();
+      if (event.key === "Escape") {
+        if (!this.el.settingsModal.classList.contains("hidden")) {
+          this.closeSettings();
+          return;
+        }
+        if (!this.el.leaveModal.classList.contains("hidden")) {
+          this.cancelLeaveOnline();
+          return;
+        }
+      }
       const key = event.key.toLowerCase();
       const now = performance.now();
       if (now - (this.keyTimes[key] || 0) < 120) return;
@@ -818,7 +855,7 @@
     _bindUI() {
       this.el.gameMode.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-mode]");
-        if (button) this.setGameMode(button.dataset.mode);
+        if (button) this.requestGameMode(button.dataset.mode);
       });
       this.el.difficulty.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-level]");
@@ -842,6 +879,8 @@
         this.settings.musicVolume = Number(this.el.musicVolume.value);
         this.settings.sfx = this.el.settingSfx.checked;
         this.settings.sfxVolume = Number(this.el.sfxVolume.value);
+        this.el.musicVolumeLabel.textContent = `${this.settings.musicVolume}%`;
+        this.el.sfxVolumeLabel.textContent = `${this.settings.sfxVolume}%`;
         this.sound.apply(this.settings);
         this.saveSettings();
         this.renderPanel();
@@ -850,8 +889,16 @@
       this.el.musicVolume.addEventListener("input", applySettings);
       this.el.settingSfx.addEventListener("change", applySettings);
       this.el.sfxVolume.addEventListener("input", applySettings);
+      this.el.settingsReset.addEventListener("click", () => this.resetSettings());
+      this.el.settingsModal.addEventListener("click", (event) => {
+        if (event.target === this.el.settingsModal) this.closeSettings();
+      });
 
       // 联机
+      this.el.onlineName.addEventListener("input", () => {
+        this.playerName = (this.el.onlineName.value || "").trim().slice(0, 8);
+        this.savePlayerName();
+      });
       this.el.onlineHost.addEventListener("click", () => this.createOnlineRoom());
       this.el.onlineJoinToggle.addEventListener("click", () => {
         this.el.onlineJoinBox.classList.toggle("hidden");
@@ -864,7 +911,9 @@
         if (event.key === "Enter") this.joinOnlineRoom();
       });
       this.el.onlineCopy.addEventListener("click", () => this.copyInviteCode());
-      this.el.onlineLeave.addEventListener("click", () => this.leaveOnline(false));
+      this.el.onlineLeave.addEventListener("click", () => this.requestLeaveOnline());
+      this.el.leaveCancel.addEventListener("click", () => this.cancelLeaveOnline());
+      this.el.leaveConfirm.addEventListener("click", () => this.confirmLeaveOnline());
       this.el.onlineTargetRow.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-target]");
         if (!button || this.onlineRole === "guest") return;
@@ -876,6 +925,15 @@
       });
       this.el.rematchAccept.addEventListener("click", () => this.acceptRematch());
       this.el.rematchDecline.addEventListener("click", () => this.declineRematch());
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          this.sound.stopMusic();
+        } else {
+          if (this.settings.music) this.sound.startMusic();
+          this.requestDraw();
+        }
+      });
 
       // 手机端：底部大按钮 + 设置抽屉
       this.el.mtMenu.addEventListener("click", () => this.openSheet());
@@ -915,7 +973,7 @@
 
     displayName(player) {
       if (this.gameMode === "online") {
-        if (player === this.myPlayer) return "你";
+        if (player === this.myPlayer) return this.playerName || "我";
         return this.opponentName || "对手";
       }
       if (this.gameMode === "pve" && player === 1) return "电脑";
@@ -1230,14 +1288,24 @@
     openSettings() {
       this.el.settingMusic.checked = this.settings.music;
       this.el.musicVolume.value = String(this.settings.musicVolume);
+      this.el.musicVolumeLabel.textContent = `${this.settings.musicVolume}%`;
       this.el.settingSfx.checked = this.settings.sfx;
       this.el.sfxVolume.value = String(this.settings.sfxVolume);
+      this.el.sfxVolumeLabel.textContent = `${this.settings.sfxVolume}%`;
       this.el.settingsModal.classList.remove("hidden");
       this.sound.unlock();
     }
 
     closeSettings() {
       this.el.settingsModal.classList.add("hidden");
+    }
+
+    resetSettings() {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS);
+      this.sound.apply(this.settings);
+      this.saveSettings();
+      this.openSettings();
+      this.renderPanel();
     }
 
     // ------------------------------------------------------------ 联机
@@ -1259,6 +1327,9 @@
         this._showOnlineModal("联机不可用", "联机组件没有加载成功，请刷新页面或换一个网络。");
         return;
       }
+      this.playerName = (this.el.onlineName.value || "").trim().slice(0, 8) || "我";
+      this.el.onlineName.value = this.playerName;
+      this.savePlayerName();
       this.onlineRole = "host";
       this.myPlayer = 0;
       this.onlineReady = false;
@@ -1295,6 +1366,9 @@
         return;
       }
       if (this.gameMode !== "online") this.setGameMode("online");
+      this.playerName = (this.el.onlineName.value || "").trim().slice(0, 8) || "我";
+      this.el.onlineName.value = this.playerName;
+      this.savePlayerName();
       this.onlineRole = "guest";
       this.myPlayer = 1;
       this.onlineReady = false;
@@ -1325,7 +1399,9 @@
     _onOnlineOpen() {
       if (this.onlineRole === "guest") {
         this.onlineStatusText = "已连接，等待房主开始…";
-        if (this.onlineSession) this.onlineSession.send({ t: "hello" });
+        if (this.onlineSession) {
+          this.onlineSession.send({ t: "hello", name: this.playerName });
+        }
       } else {
         this.onlineStatusText = "对方已连接，等待握手…";
       }
@@ -1362,6 +1438,7 @@
       if (!code) return;
       const done = () => {
         this.setMessage("邀请码已复制，发给好友即可", "ok");
+        this.toast("邀请码已复制", "ok");
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(code).then(done).catch(() => this._fallbackCopy(code, done));
@@ -1386,6 +1463,27 @@
       document.body.removeChild(input);
     }
 
+    requestLeaveOnline() {
+      if (this.gameMode !== "online") return;
+      this.pendingMode = null;
+      this.el.leaveText.textContent =
+        "离开后当前比分和棋局不会保留，需要重新创建邀请码。";
+      this.el.leaveModal.classList.remove("hidden");
+    }
+
+    cancelLeaveOnline() {
+      this.pendingMode = null;
+      this.el.leaveModal.classList.add("hidden");
+    }
+
+    confirmLeaveOnline() {
+      const pending = this.pendingMode;
+      this.pendingMode = null;
+      this.el.leaveModal.classList.add("hidden");
+      this.leaveOnline(false);
+      if (pending && pending !== "pvp") this.setGameMode(pending);
+    }
+
     leaveOnline(silent) {
       if (this.onlineSession) {
         this.onlineSession.close();
@@ -1405,9 +1503,11 @@
       this.matchOver = false;
       this.busy = false;
       this.rematch = { pending: false, requestSent: false };
+      this.pendingMode = null;
       this.state.reset();
       this.el.rematchModal.classList.add("hidden");
       this.el.onlineModal.classList.add("hidden");
+      this.el.leaveModal.classList.add("hidden");
       if (!silent) {
         this.gameMode = "pvp";
         this.setMessage("已断开联机，回到本机双人对战", "info");
@@ -1420,7 +1520,7 @@
       if (!message || typeof message.t !== "string") return;
       switch (message.t) {
         case "hello":
-          this._startAsHost();
+          this._startAsHost(message);
           break;
         case "welcome":
           this._onWelcome(message);
@@ -1458,10 +1558,14 @@
       }
     }
 
-    _startAsHost() {
+    _startAsHost(message) {
       if (this.onlineRole !== "host" || this.onlineReady || !this.onlineSession) return;
       this.onlineReady = true;
-      this.opponentName = "对手";
+      const guestName =
+        message && typeof message.name === "string"
+          ? message.name.trim().slice(0, 8)
+          : "";
+      this.opponentName = guestName || "对手";
       this.scores = [0, 0];
       this.matchOver = false;
       this.state.reset();
@@ -1472,7 +1576,7 @@
       this.onlineSession.send({
         t: "welcome",
         targetScore: this.targetScore,
-        opponent: "房主",
+        opponent: this.playerName || "房主",
         state: this.serializeState(this.state),
         scores: this.scores,
       });
@@ -1772,6 +1876,24 @@
     }
 
     // ------------------------------------------------------------ 命令
+    requestGameMode(mode) {
+      if (mode === this.gameMode) return;
+      if (
+        this.gameMode === "online" &&
+        mode !== "online" &&
+        (this.onlineReady || this.onlineRole)
+      ) {
+        this.pendingMode = mode;
+        this.el.leaveText.textContent =
+          mode === "pve"
+            ? "离开联机会结束当前对局，并切换到人机对战。"
+            : "离开联机会结束当前对局，并回到本机双人对战。";
+        this.el.leaveModal.classList.remove("hidden");
+        return;
+      }
+      this.setGameMode(mode);
+    }
+
     setGameMode(mode) {
       if (mode === this.gameMode) return;
       if (this.gameMode === "online") this.leaveOnline(true);
