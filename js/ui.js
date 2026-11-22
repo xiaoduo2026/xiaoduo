@@ -91,10 +91,29 @@
     ],
   };
 
+  const DEFAULT_SETTINGS = {
+    music: true,
+    musicVolume: 30,
+    sfx: true,
+    sfxVolume: 70,
+  };
+
   class Sound {
-    constructor() {
-      this.enabled = true;
+    constructor(settings) {
       this.ctx = null;
+      this.musicTimer = null;
+      this.musicStep = 0;
+      this.apply(settings);
+    }
+
+    apply(settings) {
+      settings = settings || DEFAULT_SETTINGS;
+      this.musicEnabled = !!settings.music;
+      this.musicVolume = Math.max(0, Math.min(1, settings.musicVolume / 100));
+      this.sfxEnabled = !!settings.sfx;
+      this.sfxVolume = Math.max(0, Math.min(1, settings.sfxVolume / 100));
+      if (!this.musicEnabled) this.stopMusic();
+      else if (this.ctx) this.startMusic();
     }
 
     _ensure() {
@@ -107,8 +126,13 @@
       return this.ctx;
     }
 
+    unlock() {
+      const ctx = this._ensure();
+      if (ctx && this.musicEnabled) this.startMusic();
+    }
+
     play(name) {
-      if (!this.enabled) return;
+      if (!this.sfxEnabled || this.sfxVolume <= 0) return;
       const recipe = SOUND_RECIPES[name];
       if (!recipe) return;
       try {
@@ -116,20 +140,56 @@
         if (!ctx) return;
         const now = ctx.currentTime + 0.01;
         for (const [freq, dur, vol, delay] of recipe) {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(freq, now + delay);
-          gain.gain.setValueAtTime(0.0001, now + delay);
-          gain.gain.exponentialRampToValueAtTime(vol, now + delay + 0.012);
-          gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now + delay);
-          osc.stop(now + delay + dur + 0.03);
+          this._tone(freq, dur, vol * this.sfxVolume, now + delay, "sine");
         }
       } catch (err) {
         // 浏览器限制自动播放时静默失败。
+      }
+    }
+
+    _tone(freq, duration, volume, startAt, type) {
+      const ctx = this.ctx;
+      if (!ctx || volume <= 0) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type || "sine";
+      osc.frequency.setValueAtTime(freq, startAt);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + duration + 0.05);
+    }
+
+    startMusic() {
+      if (!this.musicEnabled) return;
+      const ctx = this._ensure();
+      if (!ctx) return;
+      if (this.musicTimer) return;
+      const scale = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25];
+      const tick = () => {
+        if (!this.musicEnabled) {
+          this.musicTimer = null;
+          return;
+        }
+        const now = ctx.currentTime + 0.05;
+        const freq = scale[this.musicStep % scale.length];
+        this._tone(freq, 1.8, 0.05 * this.musicVolume, now, "sine");
+        if (this.musicStep % 4 === 0) {
+          this._tone(freq / 2, 3.4, 0.035 * this.musicVolume, now, "triangle");
+        }
+        this.musicStep += 1;
+        this.musicTimer = setTimeout(tick, 1900);
+      };
+      tick();
+    }
+
+    stopMusic() {
+      if (this.musicTimer) {
+        clearTimeout(this.musicTimer);
+        this.musicTimer = null;
       }
     }
   }
@@ -140,7 +200,8 @@
       this.wrap = document.getElementById("board-wrap");
       this.canvas = document.getElementById("board");
       this.ctx2d = this.canvas.getContext("2d");
-      this.sound = new Sound();
+      this.settings = this.loadSettings();
+      this.sound = new Sound(this.settings);
 
       this.state = new GameState();
       this.gameMode = "pvp";
@@ -160,14 +221,65 @@
       this.suppressHint = false;
       this._drawQueued = false;
 
+      // 联机与比分
+      this.onlineSession = null;
+      this.onlineRole = null; // 'host' | 'guest'
+      this.myPlayer = 0;
+      this.onlineReady = false;
+      this.opponentName = "对手";
+      this.onlineCode = "";
+      this.onlineStatusText = "未连接";
+      this.onlineModalShown = false;
+      this.scores = [0, 0];
+      this.targetScore = 3;
+      this.matchOver = false;
+      this.rematch = { pending: false, requestSent: false };
+
       this.el = {
         overlay: document.getElementById("overlay"),
         overlayBadge: document.getElementById("overlay-badge"),
         overlayTitle: document.getElementById("overlay-title"),
+        overlaySub: document.getElementById("overlay-sub"),
+        overlayRestart: document.getElementById("overlay-restart"),
         toast: document.getElementById("toast"),
         panel: document.getElementById("panel"),
         backdrop: document.getElementById("sheet-backdrop"),
         sheetClose: document.getElementById("sheet-close"),
+        settingsBtn: document.getElementById("settings-btn"),
+        settingsBtnMobile: document.getElementById("settings-btn-mobile"),
+        settingsModal: document.getElementById("settings-modal"),
+        settingsClose: document.getElementById("settings-close"),
+        settingMusic: document.getElementById("setting-music"),
+        musicVolume: document.getElementById("music-volume"),
+        settingSfx: document.getElementById("setting-sfx"),
+        sfxVolume: document.getElementById("sfx-volume"),
+        rematchModal: document.getElementById("rematch-modal"),
+        rematchText: document.getElementById("rematch-text"),
+        rematchAccept: document.getElementById("rematch-accept"),
+        rematchDecline: document.getElementById("rematch-decline"),
+        onlineModal: document.getElementById("online-modal"),
+        onlineModalTitle: document.getElementById("online-modal-title"),
+        onlineModalText: document.getElementById("online-modal-text"),
+        onlineModalClose: document.getElementById("online-modal-close"),
+        onlineSection: document.getElementById("online-section"),
+        onlineSetup: document.getElementById("online-setup"),
+        onlineRoom: document.getElementById("online-room"),
+        onlineHost: document.getElementById("online-host"),
+        onlineJoinToggle: document.getElementById("online-join-toggle"),
+        onlineJoinBox: document.getElementById("online-join-box"),
+        onlineCodeInput: document.getElementById("online-code-input"),
+        onlineJoin: document.getElementById("online-join"),
+        onlineCodeBox: document.getElementById("online-code-box"),
+        onlineCode: document.getElementById("online-code"),
+        onlineCopy: document.getElementById("online-copy"),
+        onlineTargetRow: document.getElementById("online-target-row"),
+        onlineStatus: document.getElementById("online-status"),
+        onlineOpponent: document.getElementById("online-opponent"),
+        onlineLeave: document.getElementById("online-leave"),
+        matchScore: document.getElementById("match-score"),
+        match0: document.getElementById("match-0"),
+        match1: document.getElementById("match-1"),
+        matchTarget: document.getElementById("match-target"),
         mtTurn: document.getElementById("mt-turn"),
         mtCounts: document.getElementById("mt-counts"),
         mtMenu: document.getElementById("mt-menu"),
@@ -213,6 +325,26 @@
         setTimeout(() => runSelfTest(this), 60);
       }
       window.__quoridorApp = this;
+    }
+
+    // ------------------------------------------------------------ 设置
+    loadSettings() {
+      const base = Object.assign({}, DEFAULT_SETTINGS);
+      try {
+        const raw = localStorage.getItem("quoridor.settings");
+        if (raw) Object.assign(base, JSON.parse(raw));
+      } catch (error) {
+        // 忽略本地存储异常
+      }
+      return base;
+    }
+
+    saveSettings() {
+      try {
+        localStorage.setItem("quoridor.settings", JSON.stringify(this.settings));
+      } catch (error) {
+        // 忽略本地存储异常
+      }
     }
 
     // ------------------------------------------------------------ 尺寸
@@ -626,6 +758,7 @@
     onPointerDown(event) {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
+      this.sound.unlock();
       const [mx, my] = this.pointFromEvent(event);
       if (this.state.winner !== null) {
         this.setMessage("本局已经结束，按 R 开始新的一局", "info");
@@ -648,6 +781,7 @@
 
     onKeyDown(event) {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
+      this.sound.unlock();
       const key = event.key.toLowerCase();
       const now = performance.now();
       if (now - (this.keyTimes[key] || 0) < 120) return;
@@ -662,6 +796,10 @@
       } else if (key === "z") {
         this.undo();
       } else if (key === "escape") {
+        if (this.gameMode === "online") {
+          this.setMessage("联机模式请用面板里的“断开联机”退出", "info");
+          return;
+        }
         if (this.mode === "wall") {
           this.setMode("move");
           this.setMessage("已取消放墙预览", "info");
@@ -693,7 +831,51 @@
       this.el.undo.addEventListener("click", () => this.undo());
       this.el.restart.addEventListener("click", () => this.restart());
       this.el.sound.addEventListener("click", () => this.toggleSound());
-      document.getElementById("overlay-restart").addEventListener("click", () => this.restart());
+      this.el.overlayRestart.addEventListener("click", () => this._overlayAction());
+
+      // 设置
+      this.el.settingsBtn.addEventListener("click", () => this.openSettings());
+      this.el.settingsBtnMobile.addEventListener("click", () => this.openSettings());
+      this.el.settingsClose.addEventListener("click", () => this.closeSettings());
+      const applySettings = () => {
+        this.settings.music = this.el.settingMusic.checked;
+        this.settings.musicVolume = Number(this.el.musicVolume.value);
+        this.settings.sfx = this.el.settingSfx.checked;
+        this.settings.sfxVolume = Number(this.el.sfxVolume.value);
+        this.sound.apply(this.settings);
+        this.saveSettings();
+        this.renderPanel();
+      };
+      this.el.settingMusic.addEventListener("change", applySettings);
+      this.el.musicVolume.addEventListener("input", applySettings);
+      this.el.settingSfx.addEventListener("change", applySettings);
+      this.el.sfxVolume.addEventListener("input", applySettings);
+
+      // 联机
+      this.el.onlineHost.addEventListener("click", () => this.createOnlineRoom());
+      this.el.onlineJoinToggle.addEventListener("click", () => {
+        this.el.onlineJoinBox.classList.toggle("hidden");
+        if (!this.el.onlineJoinBox.classList.contains("hidden")) {
+          this.el.onlineCodeInput.focus();
+        }
+      });
+      this.el.onlineJoin.addEventListener("click", () => this.joinOnlineRoom());
+      this.el.onlineCodeInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") this.joinOnlineRoom();
+      });
+      this.el.onlineCopy.addEventListener("click", () => this.copyInviteCode());
+      this.el.onlineLeave.addEventListener("click", () => this.leaveOnline(false));
+      this.el.onlineTargetRow.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-target]");
+        if (!button || this.onlineRole === "guest") return;
+        this.targetScore = Number(button.dataset.target);
+        this.renderPanel();
+      });
+      this.el.onlineModalClose.addEventListener("click", () => {
+        this.el.onlineModal.classList.add("hidden");
+      });
+      this.el.rematchAccept.addEventListener("click", () => this.acceptRematch());
+      this.el.rematchDecline.addEventListener("click", () => this.declineRematch());
 
       // 手机端：底部大按钮 + 设置抽屉
       this.el.mtMenu.addEventListener("click", () => this.openSheet());
@@ -722,11 +904,20 @@
     // ------------------------------------------------------------ 规则
     _inputLocked() {
       if (this.state.winner !== null || this.busy) return true;
+      if (this.gameMode === "online") {
+        if (!this.onlineReady || this.matchOver) return true;
+        if (this.rematch.pending) return true;
+        return this.state.turn !== this.myPlayer;
+      }
       if (this.gameMode === "pve" && (this.aiThinking || this.state.turn === 1)) return true;
       return false;
     }
 
     displayName(player) {
+      if (this.gameMode === "online") {
+        if (player === this.myPlayer) return "你";
+        return this.opponentName || "对手";
+      }
       if (this.gameMode === "pve" && player === 1) return "电脑";
       return PLAYER_LABELS[player];
     }
@@ -747,11 +938,19 @@
         this.setMessage(st.explainMove(x, y), "bad");
         return;
       }
+      if (this.gameMode === "online" && this.myPlayer === 1) {
+        this.requestOnlineAction({ type: "move", x, y });
+        return;
+      }
       const player = st.turn;
       const from = [st.pawns[player][0], st.pawns[player][1]];
       st.movePiece(x, y);
       this.sound.play("move");
       this.hoverCell = null;
+      if (this.gameMode === "online") {
+        this.afterAction();
+        return;
+      }
       this.animatePawn(player, from, [x, y], () => this.afterAction());
     }
 
@@ -764,13 +963,17 @@
         this.setMessage(problem, "bad");
         return;
       }
+      if (this.gameMode === "online" && this.myPlayer === 1) {
+        this.requestOnlineAction({ type: "wall", orient, x, y });
+        return;
+      }
       const player = st.turn;
       st.placeWall(orient, x, y);
       this.sound.play("wall");
       this.hoverSlot = null;
       this.mode = "move";
       this.setMessage(
-        `${PLAYER_LABELS[player]}${orient === H ? "横" : "竖"}放挡板，剩余 ${st.wallsLeft[player]} 块`,
+        `${this.displayName(player)}${orient === H ? "横" : "竖"}放挡板，剩余 ${st.wallsLeft[player]} 块`,
         "info"
       );
       this.suppressHint = true;
@@ -783,6 +986,17 @@
       const duration = 170;
       const start = performance.now();
       this.busy = true;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(fallback);
+        this.pawnAnim = null;
+        this.busy = false;
+        done();
+      };
+      // 后台标签页可能暂停 rAF，用定时器兜底，避免一直卡在“动画中”。
+      const fallback = setTimeout(finish, duration + 80);
       const tick = (now) => {
         if (token !== this.animToken) return;
         const k = Math.min(1, (now - start) / duration);
@@ -796,9 +1010,7 @@
         if (k < 1) {
           requestAnimationFrame(tick);
         } else {
-          this.pawnAnim = null;
-          this.busy = false;
-          done();
+          finish();
         }
       };
       requestAnimationFrame(tick);
@@ -807,6 +1019,22 @@
     afterAction() {
       this.renderPanel();
       this.requestDraw();
+      if (this.gameMode === "online") {
+        if (this.myPlayer === 0 && this.state.winner !== null) {
+          this.updateOnlineScores(this.state.winner);
+        }
+        if (this.state.winner !== null) {
+          if (this.myPlayer === 0) this.broadcastOnlineState();
+          this.showWin();
+          return;
+        }
+        if (this.myPlayer === 0) this.broadcastOnlineState();
+        this.setMessage(
+          this.state.turn === this.myPlayer ? "轮到你走，请选择移动或放墙" : "已发送，等待对方…",
+          "info"
+        );
+        return;
+      }
       if (this.state.winner !== null) {
         this.showWin();
         return;
@@ -888,7 +1116,7 @@
       const turn = st.turn;
       const locked = this._inputLocked();
 
-      for (const mode of ["pvp", "pve"]) {
+      for (const mode of ["pvp", "online", "pve"]) {
         const button = this.el.gameMode.querySelector(`[data-mode="${mode}"]`);
         if (button) button.classList.toggle("active", this.gameMode === mode);
       }
@@ -896,6 +1124,7 @@
       for (const button of this.el.difficulty.querySelectorAll("button")) {
         button.classList.toggle("active", button.dataset.level === this.level);
       }
+      this.renderOnlinePanel();
 
       for (const player of [0, 1]) {
         const name = this.displayName(player);
@@ -910,14 +1139,19 @@
       let turnText;
       let turnClass = "";
       let sideText;
-      if (winner !== null) {
+      if (this.gameMode === "online" && !this.onlineReady) {
+        turnText = "联机对战";
+        sideText = this.onlineStatusText || "未连接";
+      } else if (winner !== null) {
         turnText = `${this.displayName(winner)} 获胜`;
         turnClass = winner === 1 ? "p2" : "";
-        sideText = "本局结束";
+        sideText = this.matchOver ? "比赛结束" : "本局结束";
       } else {
         turnText = `轮到 ${this.displayName(turn)}`;
         turnClass = turn === 1 ? "p2" : "";
-        if (this.aiThinking) sideText = "电脑思考中";
+        if (this.gameMode === "online") {
+          sideText = turn === this.myPlayer ? "你的回合" : "等待对方";
+        } else if (this.aiThinking) sideText = "电脑思考中";
         else if (this.gameMode === "pve" && turn === 1) sideText = "电脑回合";
         else sideText = this.mode === "move" ? "移动模式" : "放墙模式";
       }
@@ -930,12 +1164,15 @@
       if (this.el.mtTurn) {
         this.el.mtTurn.textContent = turnText;
         this.el.mtTurn.className = "mt-turn " + turnClass;
-        this.el.mtCounts.textContent = `挡板 ${st.wallsLeft[0]} · ${st.wallsLeft[1]}`;
+        this.el.mtCounts.textContent =
+          this.gameMode === "online"
+            ? `比分 ${this.scores[0]}:${this.scores[1]} · 挡板 ${st.wallsLeft[0]}:${st.wallsLeft[1]}`
+            : `挡板 ${st.wallsLeft[0]} · ${st.wallsLeft[1]}`;
         this.el.dockMove.classList.toggle("active", this.mode === "move" && !locked);
         this.el.dockWall.classList.toggle("active", this.mode === "wall" && !locked);
         this.el.dockMove.disabled = locked;
         this.el.dockWall.disabled = locked || st.wallsLeft[turn] <= 0;
-        this.el.dockUndo.disabled = !st.canUndo() || locked;
+        this.el.dockUndo.disabled = this.gameMode === "online" || !st.canUndo() || locked;
         for (const player of [0, 1]) {
           this.el.miNames[player].textContent = this.displayName(player);
           this.el.miWalls[player].textContent = `挡板 ${st.wallsLeft[player]}`;
@@ -956,13 +1193,507 @@
         else button.disabled = locked || st.wallsLeft[turn] <= 0;
       }
 
-      this.el.undo.disabled = !st.canUndo() || locked;
-      this.el.sound.textContent = this.sound.enabled ? "音效 开" : "音效 关";
+      this.el.undo.disabled = this.gameMode === "online" || !st.canUndo() || locked;
+      this.el.restart.disabled = this.gameMode === "online" && this.matchOver;
+      this.el.sound.textContent = this.settings.sfx ? "音效 开" : "音效 关";
+      this.el.matchScore.classList.toggle("hidden", this.gameMode !== "online");
+      this.el.match0.textContent = String(this.scores[0]);
+      this.el.match1.textContent = String(this.scores[1]);
+      this.el.matchTarget.textContent = `先到 ${this.targetScore} 分`;
       this.el.message.textContent = this.msg.text;
       this.el.message.className = "message " + this.msg.kind;
 
       this.updateOverlay();
       this.requestDraw();
+    }
+
+    renderOnlinePanel() {
+      const online = this.gameMode === "online";
+      this.el.onlineSection.classList.toggle("hidden", !online);
+      if (!online) return;
+
+      const connected = this.onlineReady;
+      this.el.onlineSetup.classList.toggle("hidden", connected);
+      this.el.onlineRoom.classList.toggle("hidden", !connected);
+      this.el.onlineCodeBox.classList.toggle("hidden", !this.onlineCode || connected);
+      this.el.onlineCode.textContent = this.onlineCode || "------";
+      this.el.onlineStatus.textContent = this.onlineStatusText || "未连接";
+      for (const button of this.el.onlineTargetRow.querySelectorAll("button")) {
+        button.classList.toggle("active", Number(button.dataset.target) === this.targetScore);
+        button.disabled = this.onlineRole === "guest" || connected;
+      }
+      if (connected) {
+        this.el.onlineOpponent.textContent = this.opponentName || "对手";
+      }
+    }
+
+    openSettings() {
+      this.el.settingMusic.checked = this.settings.music;
+      this.el.musicVolume.value = String(this.settings.musicVolume);
+      this.el.settingSfx.checked = this.settings.sfx;
+      this.el.sfxVolume.value = String(this.settings.sfxVolume);
+      this.el.settingsModal.classList.remove("hidden");
+      this.sound.unlock();
+    }
+
+    closeSettings() {
+      this.el.settingsModal.classList.add("hidden");
+    }
+
+    // ------------------------------------------------------------ 联机
+    _ensureOnlineSession() {
+      if (!window.QuoridorOnline) return null;
+      if (this.onlineSession) this.onlineSession.close();
+      this.onlineSession = new window.QuoridorOnline.OnlineSession({
+        onOpen: () => this._onOnlineOpen(),
+        onMessage: (message) => this._onOnlineMessage(message),
+        onClose: () => this._onOnlineClose(),
+        onStatus: (status) => this._onOnlineStatus(status),
+      });
+      return this.onlineSession;
+    }
+
+    async createOnlineRoom() {
+      if (this.gameMode !== "online") this.setGameMode("online");
+      if (!window.Peer) {
+        this._showOnlineModal("联机不可用", "联机组件没有加载成功，请刷新页面或换一个网络。");
+        return;
+      }
+      this.onlineRole = "host";
+      this.myPlayer = 0;
+      this.onlineReady = false;
+      this.opponentName = "对手";
+      this.onlineCode = "";
+      this.scores = [0, 0];
+      this.matchOver = false;
+      this.state.reset();
+      this.mode = "move";
+      this.winnerShown = null;
+      this.updateOverlay();
+      this.onlineStatusText = "正在创建邀请码…";
+      this.renderPanel();
+      const session = this._ensureOnlineSession();
+      if (!session) return;
+      try {
+        const code = await session.host();
+        if (this.gameMode !== "online" || this.onlineSession !== session) return;
+        this.onlineCode = code;
+        this.onlineStatusText = "等待对方加入…";
+        this.setMessage("邀请码已生成，复制发给好友", "info");
+      } catch (error) {
+        if (this.onlineSession !== session) return;
+        this.onlineStatusText = error.message || "创建失败";
+        this._showOnlineModal("创建房间失败", this.onlineStatusText);
+      }
+      this.renderPanel();
+    }
+
+    async joinOnlineRoom() {
+      const code = String(this.el.onlineCodeInput.value || "").trim().toLowerCase();
+      if (!code) {
+        this.setMessage("请先粘贴邀请码", "bad");
+        return;
+      }
+      if (this.gameMode !== "online") this.setGameMode("online");
+      this.onlineRole = "guest";
+      this.myPlayer = 1;
+      this.onlineReady = false;
+      this.opponentName = "房主";
+      this.onlineCode = "";
+      this.scores = [0, 0];
+      this.matchOver = false;
+      this.state.reset();
+      this.mode = "move";
+      this.winnerShown = null;
+      this.updateOverlay();
+      this.onlineStatusText = "正在加入房间…";
+      this.renderPanel();
+      const session = this._ensureOnlineSession();
+      if (!session) return;
+      try {
+        await session.join(code);
+        if (this.gameMode !== "online" || this.onlineSession !== session) return;
+        this.onlineStatusText = "已连接，等待房主开始…";
+      } catch (error) {
+        if (this.onlineSession !== session) return;
+        this.onlineStatusText = error.message || "加入失败";
+        this._showOnlineModal("加入失败", this.onlineStatusText);
+      }
+      this.renderPanel();
+    }
+
+    _onOnlineOpen() {
+      if (this.onlineRole === "guest") {
+        this.onlineStatusText = "已连接，等待房主开始…";
+        if (this.onlineSession) this.onlineSession.send({ t: "hello" });
+      } else {
+        this.onlineStatusText = "对方已连接，等待握手…";
+      }
+      this.renderPanel();
+    }
+
+    _onOnlineStatus(status) {
+      if (!status) return;
+      this.onlineStatusText = status.text || this.onlineStatusText;
+      if (status.type === "waiting" && status.code) this.onlineCode = status.code;
+      if (status.type === "error") {
+        this._showOnlineModal("联机错误", status.text || "联机发生错误");
+      }
+      this.renderPanel();
+    }
+
+    _onOnlineClose() {
+      if (this.gameMode !== "online") return;
+      this.onlineReady = false;
+      this.busy = false;
+      this.onlineStatusText = "连接已断开";
+      this._showOnlineModal("连接已断开", "对方已经离开，或网络中断。可以断开联机后重新创建房间。");
+      this.renderPanel();
+    }
+
+    _showOnlineModal(title, text) {
+      this.el.onlineModalTitle.textContent = title;
+      this.el.onlineModalText.textContent = text;
+      this.el.onlineModal.classList.remove("hidden");
+    }
+
+    copyInviteCode() {
+      const code = this.onlineCode;
+      if (!code) return;
+      const done = () => {
+        this.setMessage("邀请码已复制，发给好友即可", "ok");
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(done).catch(() => this._fallbackCopy(code, done));
+      } else {
+        this._fallbackCopy(code, done);
+      }
+    }
+
+    _fallbackCopy(text, done) {
+      const input = document.createElement("textarea");
+      input.value = text;
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      try {
+        document.execCommand("copy");
+        done();
+      } catch (error) {
+        this.setMessage("复制失败，请手动选择邀请码", "bad");
+      }
+      document.body.removeChild(input);
+    }
+
+    leaveOnline(silent) {
+      if (this.onlineSession) {
+        this.onlineSession.close();
+        this.onlineSession = null;
+      }
+      if (this.onlineRequestTimer) {
+        clearTimeout(this.onlineRequestTimer);
+        this.onlineRequestTimer = null;
+      }
+      this.onlineRole = null;
+      this.myPlayer = 0;
+      this.onlineReady = false;
+      this.onlineCode = "";
+      this.opponentName = "对手";
+      this.onlineStatusText = "未连接";
+      this.scores = [0, 0];
+      this.matchOver = false;
+      this.busy = false;
+      this.rematch = { pending: false, requestSent: false };
+      this.state.reset();
+      this.el.rematchModal.classList.add("hidden");
+      this.el.onlineModal.classList.add("hidden");
+      if (!silent) {
+        this.gameMode = "pvp";
+        this.setMessage("已断开联机，回到本机双人对战", "info");
+      }
+      this.renderPanel();
+      this.requestDraw();
+    }
+
+    _onOnlineMessage(message) {
+      if (!message || typeof message.t !== "string") return;
+      switch (message.t) {
+        case "hello":
+          this._startAsHost();
+          break;
+        case "welcome":
+          this._onWelcome(message);
+          break;
+        case "state":
+          this._applyOnlineState(message);
+          break;
+        case "request":
+          this._handleGuestAction(message.action);
+          break;
+        case "reject":
+          this.busy = false;
+          if (this.onlineRequestTimer) clearTimeout(this.onlineRequestTimer);
+          this.setMessage(message.text || "动作没有通过校验", "bad");
+          this.renderPanel();
+          break;
+        case "rematch-request":
+          this._onRematchRequest();
+          break;
+        case "rematch-accept":
+          if (this.onlineRole === "host" && this.rematch.pending) {
+            this._resetRoundAndBroadcast();
+          }
+          break;
+        case "rematch-decline":
+          this.rematch = { pending: false, requestSent: false };
+          this.setMessage("对方拒绝了重开请求", "info");
+          this.renderPanel();
+          break;
+        case "leave":
+          this._onOnlineClose();
+          break;
+        default:
+          break;
+      }
+    }
+
+    _startAsHost() {
+      if (this.onlineRole !== "host" || this.onlineReady || !this.onlineSession) return;
+      this.onlineReady = true;
+      this.opponentName = "对手";
+      this.scores = [0, 0];
+      this.matchOver = false;
+      this.state.reset();
+      this.mode = "move";
+      this.busy = false;
+      this.winnerShown = null;
+      this.onlineStatusText = "已连接";
+      this.onlineSession.send({
+        t: "welcome",
+        targetScore: this.targetScore,
+        opponent: "房主",
+        state: this.serializeState(this.state),
+        scores: this.scores,
+      });
+      this.updateOverlay();
+      this.setMessage("已连接，你先走", "info");
+      this.renderPanel();
+      this.requestDraw();
+    }
+
+    _onWelcome(message) {
+      if (this.onlineRole !== "guest") return;
+      this.targetScore = Number(message.targetScore) || 3;
+      this.opponentName = message.opponent || "房主";
+      this.myPlayer = 1;
+      this.onlineReady = true;
+      this.scores = Array.isArray(message.scores) ? message.scores.slice(0, 2) : [0, 0];
+      this.matchOver = false;
+      this.busy = false;
+      this.winnerShown = null;
+      this.state = this.deserializeState(message.state);
+      this.onlineStatusText = "已连接";
+      this.setMessage("已连接，等待房主走棋", "info");
+      this.updateOverlay();
+      this.renderPanel();
+      this.requestDraw();
+    }
+
+    _handleGuestAction(action) {
+      if (this.myPlayer !== 0 || !this.onlineReady || !action) return;
+      const st = this.state;
+      if (st.winner !== null || st.turn !== 1) {
+        this.onlineSession.send({ t: "reject", text: "还没轮到你" });
+        return;
+      }
+      if (action.type === "move") {
+        if (!st.isValidMove(action.x, action.y)) {
+          this.onlineSession.send({ t: "reject", text: "走法不合法" });
+          return;
+        }
+        st.movePiece(action.x, action.y);
+        this.sound.play("move");
+        this.hoverCell = null;
+        this.afterAction();
+      } else if (action.type === "wall") {
+        if (st.wallProblem(action.orient, action.x, action.y)) {
+          this.onlineSession.send({ t: "reject", text: "放墙位置不合法" });
+          return;
+        }
+        st.placeWall(action.orient, action.x, action.y);
+        this.sound.play("wall");
+        this.suppressHint = true;
+        this.afterAction();
+      }
+    }
+
+    requestOnlineAction(action) {
+      if (!this.onlineSession || !this.onlineReady) return;
+      this.busy = true;
+      this.setMessage("已发送，等待房主确认…", "info");
+      this.renderPanel();
+      this.onlineSession.send({ t: "request", action });
+      if (this.onlineRequestTimer) clearTimeout(this.onlineRequestTimer);
+      this.onlineRequestTimer = setTimeout(() => {
+        if (this.busy) {
+          this.busy = false;
+          this.setMessage("对方没有响应，请重试", "bad");
+          this.renderPanel();
+        }
+      }, 10000);
+    }
+
+    serializeState(st) {
+      return {
+        pawns: [[st.pawns[0][0], st.pawns[0][1]], [st.pawns[1][0], st.pawns[1][1]]],
+        h: Array.from(st.hWalls),
+        v: Array.from(st.vWalls),
+        left: [st.wallsLeft[0], st.wallsLeft[1]],
+        turn: st.turn,
+        winner: st.winner,
+        last: st.lastAction,
+        count: st.turnCount,
+      };
+    }
+
+    deserializeState(data) {
+      const st = new GameState();
+      st.pawns = [[data.pawns[0][0], data.pawns[0][1]], [data.pawns[1][0], data.pawns[1][1]]];
+      st.hWalls = new Set(data.h || []);
+      st.vWalls = new Set(data.v || []);
+      st.wallsLeft = [data.left[0], data.left[1]];
+      st.turn = data.turn;
+      st.winner = data.winner;
+      st.lastAction = data.last || null;
+      st.turnCount = data.count || 0;
+      st.history = [];
+      return st;
+    }
+
+    broadcastOnlineState(extra) {
+      if (!this.onlineSession || this.myPlayer !== 0 || !this.onlineReady) return;
+      const last = this.state.lastAction;
+      this.onlineSession.send(
+        Object.assign(
+          {
+            t: "state",
+            state: this.serializeState(this.state),
+            scores: this.scores.slice(),
+            targetScore: this.targetScore,
+            matchOver: this.matchOver,
+            sound: last ? last.type : null,
+          },
+          extra || {}
+        )
+      );
+    }
+
+    _applyOnlineState(message) {
+      if (this.myPlayer !== 1) return;
+      const previous = this.state;
+      this.state = this.deserializeState(message.state);
+      this.scores = Array.isArray(message.scores) ? message.scores.slice(0, 2) : this.scores;
+      this.targetScore = Number(message.targetScore) || this.targetScore;
+      this.matchOver = !!message.matchOver;
+      this.busy = false;
+      if (this.onlineRequestTimer) {
+        clearTimeout(this.onlineRequestTimer);
+        this.onlineRequestTimer = null;
+      }
+      this.rematch = { pending: false, requestSent: false };
+      this.el.rematchModal.classList.add("hidden");
+      this.animToken++;
+      this.pawnAnim = null;
+      this.hoverCell = null;
+      this.hoverSlot = null;
+      this.winnerShown = null;
+      this.updateOverlay();
+      this.requestDraw();
+      this.renderPanel();
+      if (this.state.winner !== null) {
+        this.showWin();
+      } else {
+        if (message.sound === "move" || message.sound === "wall") {
+          this.sound.play(message.sound);
+        }
+        this.setMessage(
+          this.state.turn === this.myPlayer ? "轮到你走" : "等待对方走棋",
+          "info"
+        );
+      }
+    }
+
+    updateOnlineScores(winner) {
+      if (this.matchOver) return;
+      this.scores[winner] += 1;
+      if (this.scores[winner] >= this.targetScore) this.matchOver = true;
+    }
+
+    requestRematch() {
+      if (this.gameMode !== "online" || !this.onlineReady || this.matchOver) return;
+      if (this.rematch.pending) return;
+      this.rematch.pending = true;
+      this.rematch.requestSent = true;
+      this.onlineSession.send({ t: "rematch-request" });
+      this.setMessage("已请求重开，等待对方同意…", "info");
+      this.renderPanel();
+    }
+
+    _onRematchRequest() {
+      if (!this.onlineReady) return;
+      if (this.rematch.requestSent) {
+        this.acceptRematch();
+        return;
+      }
+      this.rematch.pending = true;
+      this.el.rematchText.textContent = "对方请求重新开始本局，是否同意？";
+      this.el.rematchModal.classList.remove("hidden");
+      this.renderPanel();
+    }
+
+    acceptRematch() {
+      this.el.rematchModal.classList.add("hidden");
+      if (!this.onlineSession) return;
+      this.onlineSession.send({ t: "rematch-accept" });
+      this.rematch = { pending: false, requestSent: false };
+      if (this.onlineRole === "host") {
+        this._resetRoundAndBroadcast();
+      } else {
+        this.setMessage("已同意，等待房主开始…", "info");
+        this.renderPanel();
+      }
+    }
+
+    declineRematch() {
+      this.el.rematchModal.classList.add("hidden");
+      this.rematch = { pending: false, requestSent: false };
+      if (this.onlineSession) this.onlineSession.send({ t: "rematch-decline" });
+      this.setMessage("已拒绝重开", "info");
+      this.renderPanel();
+    }
+
+    _resetRoundAndBroadcast() {
+      this.state.reset();
+      this.matchOver = false;
+      this.winnerShown = null;
+      this.busy = false;
+      this.mode = "move";
+      this.rematch = { pending: false, requestSent: false };
+      this.el.rematchModal.classList.add("hidden");
+      this.updateOverlay();
+      this.broadcastOnlineState({ reset: true });
+      this.setMessage("新的一局开始，你先走", "info");
+      this.renderPanel();
+      this.requestDraw();
+    }
+
+    _overlayAction() {
+      if (this.gameMode === "online") {
+        if (!this.matchOver) this.requestRematch();
+        return;
+      }
+      this.restart();
     }
 
     setMessage(text, kind) {
@@ -997,18 +1728,41 @@
       }
       this.el.overlayBadge.textContent = String(winner + 1);
       this.el.overlayBadge.style.background = PLAYER_COLORS[winner];
-      this.el.overlayTitle.textContent = `${this.displayName(winner)} 获胜！`;
       this.el.overlayTitle.style.color = PLAYER_COLORS[winner];
+      if (this.gameMode === "online") {
+        this.el.overlayTitle.textContent = this.matchOver
+          ? `${this.displayName(winner)} 赢得比赛！`
+          : `${this.displayName(winner)} 本局获胜！`;
+        this.el.overlaySub.textContent = this.matchOver
+          ? `最终比分 ${this.scores[0]} : ${this.scores[1]}`
+          : `比分 ${this.scores[0]} : ${this.scores[1]} · 先到 ${this.targetScore} 分`;
+        this.el.overlayRestart.textContent = this.matchOver ? "比赛结束" : "下一局（需双方同意）";
+        this.el.overlayRestart.disabled = this.matchOver || !this.onlineReady;
+      } else {
+        this.el.overlayTitle.textContent = `${this.displayName(winner)} 获胜！`;
+        this.el.overlaySub.textContent = "率先抵达对岸底线";
+        this.el.overlayRestart.textContent = "再来一局 R";
+        this.el.overlayRestart.disabled = false;
+      }
       this.el.overlay.classList.remove("hidden");
     }
 
     showWin() {
       const winner = this.state.winner;
       this.closeSheet();
-      this.setMessage(
-        `${this.displayName(winner)} 抵达对岸，获得胜利！按 R 开始新的一局。`,
-        "win"
-      );
+      if (this.gameMode === "online") {
+        this.setMessage(
+          this.matchOver
+            ? `${this.displayName(winner)} 赢得比赛，比分 ${this.scores[0]} : ${this.scores[1]}。`
+            : `${this.displayName(winner)} 赢下本局，比分 ${this.scores[0]} : ${this.scores[1]}。`,
+          "win"
+        );
+      } else {
+        this.setMessage(
+          `${this.displayName(winner)} 抵达对岸，获得胜利！按 R 开始新的一局。`,
+          "win"
+        );
+      }
       this.updateOverlay();
       this.renderPanel();
       if (this.winnerShown !== winner) {
@@ -1020,14 +1774,44 @@
     // ------------------------------------------------------------ 命令
     setGameMode(mode) {
       if (mode === this.gameMode) return;
+      if (this.gameMode === "online") this.leaveOnline(true);
       this.gameMode = mode;
-      this.restart(
-        mode === "pve" ? "已切换到人机对战，玩家一先行" : "已切换到双人对战，玩家一先行"
+      this.cancelAI();
+      this.animToken++;
+      this.busy = false;
+      this.pawnAnim = null;
+      this.scores = [0, 0];
+      this.matchOver = false;
+      this.onlineReady = false;
+      this.rematch = { pending: false, requestSent: false };
+      this.state.reset();
+      this.mode = "move";
+      this.winnerShown = null;
+      this.el.onlineModal.classList.add("hidden");
+      this.updateOverlay();
+      this.closeSheet();
+
+      if (mode === "online") {
+        this.onlineRole = null;
+        this.onlineCode = "";
+        this.onlineStatusText = "未连接";
+        this.setMessage("创建邀请码，或输入好友的邀请码加入", "info");
+        this.renderPanel();
+        this.requestDraw();
+        return;
+      }
+
+      this.ai = new QuoridorAI(1, this.level, Date.now() & 0xffff);
+      this.setMessage(
+        mode === "pve" ? "已切换到人机对战，玩家一先行" : "已切换到双人对战，玩家一先行",
+        "info"
       );
+      this.renderPanel();
+      this.requestDraw();
     }
 
     setLevel(level) {
-      if (level === this.level) return;
+      if (level === this.level || this.gameMode === "online") return;
       this.level = level;
       this.ai = new QuoridorAI(1, level, Date.now() & 0xffff);
       this.setMessage(`电脑难度：${level}`, "info");
@@ -1049,6 +1833,10 @@
     }
 
     undo() {
+      if (this.gameMode === "online") {
+        this.setMessage("联机模式不允许悔棋", "bad");
+        return;
+      }
       if (this.busy) return;
       if (this.state.winner !== null) {
         this.setMessage("本局已结束，按 R 开始新的一局", "info");
@@ -1078,6 +1866,11 @@
     }
 
     restart(message) {
+      if (this.gameMode === "online") {
+        if (this.matchOver) return;
+        this.requestRematch();
+        return;
+      }
       this.cancelAI();
       this.closeSheet();
       this.animToken++;
@@ -1097,9 +1890,11 @@
     }
 
     toggleSound() {
-      this.sound.enabled = !this.sound.enabled;
+      this.settings.sfx = !this.settings.sfx;
+      this.sound.apply(this.settings);
+      this.saveSettings();
       this.renderPanel();
-      if (this.sound.enabled) this.sound.play("start");
+      if (this.settings.sfx) this.sound.play("start");
     }
 
     // ------------------------------------------------------------ 演示/自检
@@ -1128,6 +1923,29 @@
         st.turn = 1;
         this.aiThinking = true;
         this.setMessage("电脑正在思考…", "info");
+      } else if (kind === "online") {
+        this.gameMode = "online";
+        this.onlineRole = null;
+        this.onlineReady = false;
+        this.onlineStatusText = "未连接";
+        this.onlineCode = "";
+        this.scores = [0, 0];
+        this.matchOver = false;
+        this.setMessage("创建邀请码，或输入好友的邀请码加入", "info");
+      } else if (kind === "room") {
+        this.gameMode = "online";
+        this.onlineRole = "host";
+        this.myPlayer = 0;
+        this.onlineReady = true;
+        this.opponentName = "好友";
+        this.onlineCode = "q9-demo88";
+        this.onlineStatusText = "已连接";
+        this.scores = [1, 0];
+        this.targetScore = 3;
+        this.matchOver = false;
+        this.setMessage("轮到你走，请选择移动或放墙", "info");
+      } else if (kind === "settings") {
+        this.openSettings();
       }
       this.renderPanel();
       this.requestDraw();
@@ -1177,14 +1995,14 @@
       await wait(60);
       check("空格切换放墙模式", app.mode === "wall");
 
-      click(...app.wallCenter(H, 3, 6));
+      click(...app.wallCenter(H, 3, 5));
       await wait(120);
-      check("点击格缝放置挡板", app.state.hWalls.has(wallKey(3, 6)));
+      check("点击格缝放置挡板", app.state.hWalls.has(wallKey(3, 5)));
       check("放墙后扣减挡板并换人", app.state.wallsLeft[1] === 9 && app.state.turn === 0);
 
       key("z");
       await wait(60);
-      check("Z 撤销挡板", !app.state.hWalls.has(wallKey(3, 6)) && app.state.wallsLeft[1] === 10);
+      check("Z 撤销挡板", !app.state.hWalls.has(wallKey(3, 5)) && app.state.wallsLeft[1] === 10);
 
       key("r");
       await wait(60);
@@ -1232,3 +2050,4 @@
     boot();
   }
 })();
+

@@ -7,9 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>步步为营 · Quoridor 墙棋</title>
-<meta name="description" content="9×9 双人墙棋：移动棋子或放置挡板，先抵达对岸者胜。支持双人对战与三档人机对战。">
+<meta name="description" content="9×9 双人墙棋：移动棋子或放置挡板，先抵达对岸者胜。支持本机双人、邀请码联机对战与三档人机对战。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2310141c'/%3E%3Crect x='9' y='9' width='46' height='46' rx='4' fill='%23efe3c8'/%3E%3Crect x='9' y='9' width='46' height='4' fill='%23e9b44c'/%3E%3Crect x='9' y='51' width='46' height='4' fill='%23e9b44c'/%3E%3Ccircle cx='24' cy='32' r='7' fill='%23ef7d3f'/%3E%3Ccircle cx='41' cy='32' r='7' fill='%234d9fe6'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=20261121">
+<link rel="stylesheet" href="style.css?v=20261122">
 </head>
 <body>
 <div id="boot-error" class="hidden"></div>
@@ -25,7 +25,7 @@
         <div class="overlay-card">
           <div class="overlay-badge" id="overlay-badge">1</div>
           <h2 id="overlay-title">玩家一 获胜！</h2>
-          <p class="overlay-sub">率先抵达对岸底线</p>
+          <p class="overlay-sub" id="overlay-sub">率先抵达对岸底线</p>
           <button class="overlay-btn" id="overlay-restart">再来一局 <kbd>R</kbd></button>
         </div>
       </div>
@@ -57,13 +57,15 @@
       <header class="panel-head">
         <h1>步步为营</h1>
         <span class="brand-en">QUORIDOR</span>
+        <button type="button" class="panel-settings" id="settings-btn" aria-label="设置">⚙</button>
         <p class="subtitle">9×9 墙棋 · 先抵达对岸者胜</p>
       </header>
 
       <section class="section">
         <div class="section-label">对战模式</div>
-        <div class="seg" id="game-mode">
+        <div class="seg seg-3" id="game-mode">
           <button type="button" data-mode="pvp" class="active">双人对战</button>
+          <button type="button" data-mode="online">联机对战</button>
           <button type="button" data-mode="pve">人机对战</button>
         </div>
       </section>
@@ -76,6 +78,47 @@
           <button type="button" data-level="困难">困难</button>
         </div>
       </section>
+
+      <section class="section hidden" id="online-section">
+        <div class="section-label">联机对战</div>
+
+        <div id="online-setup">
+          <p class="online-hint">创建邀请码发给好友；或输入好友的邀请码加入。</p>
+          <div class="online-actions">
+            <button type="button" class="online-btn primary" id="online-host">创建邀请码</button>
+            <button type="button" class="online-btn" id="online-join-toggle">输入邀请码</button>
+          </div>
+          <div class="online-join hidden" id="online-join-box">
+            <input id="online-code-input" autocomplete="off" spellcheck="false"
+                   placeholder="粘贴邀请码，例如 q9-ab12cd">
+            <button type="button" id="online-join">加入</button>
+          </div>
+          <div class="online-code-box hidden" id="online-code-box">
+            <span class="online-code" id="online-code">------</span>
+            <button type="button" id="online-copy">复制</button>
+          </div>
+          <div class="online-target" id="online-target-row">
+            <span>目标分</span>
+            <button type="button" data-target="1">1</button>
+            <button type="button" data-target="3" class="active">3</button>
+            <button type="button" data-target="5">5</button>
+          </div>
+          <p class="online-status" id="online-status">未连接</p>
+        </div>
+
+        <div id="online-room" class="hidden">
+          <div class="online-room-row">
+            <span>对手</span><b id="online-opponent">等待加入</b>
+          </div>
+          <button type="button" class="online-btn danger" id="online-leave">断开联机</button>
+        </div>
+      </section>
+
+      <div class="match-score hidden" id="match-score">
+        <span>比分</span>
+        <b id="match-0">0</b><i>:</i><b id="match-1">0</b>
+        <span class="match-target" id="match-target">先到 3 分</span>
+      </div>
 
       <div class="players">
         <article class="player-card active" id="card-0">
@@ -139,6 +182,7 @@
     <span class="mt-turn" id="mt-turn">轮到 玩家一</span>
     <span class="mt-counts" id="mt-counts">挡板 10 · 10</span>
   </div>
+  <button type="button" class="mt-menu" id="settings-btn-mobile" aria-label="设置">⚙</button>
   <button type="button" class="mt-menu" id="mt-menu" aria-label="打开菜单">☰</button>
 </header>
 
@@ -153,6 +197,53 @@
   <button type="button" class="dock-btn" id="dock-menu">菜单</button>
 </nav>
 
+<div class="modal hidden" id="settings-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>设置</h3>
+      <button type="button" id="settings-close">完成</button>
+    </div>
+    <label class="setting-row">
+      <span>背景音乐</span>
+      <input type="checkbox" id="setting-music">
+    </label>
+    <label class="setting-row">
+      <span>音乐音量</span>
+      <input type="range" id="music-volume" min="0" max="100" step="1">
+    </label>
+    <label class="setting-row">
+      <span>游戏音效</span>
+      <input type="checkbox" id="setting-sfx">
+    </label>
+    <label class="setting-row">
+      <span>音效音量</span>
+      <input type="range" id="sfx-volume" min="0" max="100" step="1">
+    </label>
+    <p class="setting-note">设置会自动保存在本机浏览器。</p>
+  </div>
+</div>
+
+<div class="modal hidden" id="rematch-modal">
+  <div class="modal-card small">
+    <h3>再来一局？</h3>
+    <p id="rematch-text">对方请求重新开始本局。</p>
+    <div class="modal-actions">
+      <button type="button" id="rematch-decline">拒绝</button>
+      <button type="button" class="primary" id="rematch-accept">接受</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="online-modal">
+  <div class="modal-card small">
+    <h3 id="online-modal-title">联机提示</h3>
+    <p id="online-modal-text"></p>
+    <div class="modal-actions">
+      <button type="button" class="primary" id="online-modal-close">知道了</button>
+    </div>
+  </div>
+</div>
+
 <script>
   window.addEventListener("error", function (event) {
     var box = document.getElementById("boot-error");
@@ -163,7 +254,9 @@
     box.classList.remove("hidden");
   }, true);
 </script>
-<script src="js/engine.js?v=20261121"></script>
-<script src="js/ui.js?v=20261121"></script>
+<script src="js/vendor/peerjs.min.js?v=20261122"></script>
+<script src="js/engine.js?v=20261122"></script>
+<script src="js/online.js?v=20261122"></script>
+<script src="js/ui.js?v=20261122"></script>
 </body>
 </html>
